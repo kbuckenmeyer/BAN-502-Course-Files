@@ -1,0 +1,338 @@
+---
+output:
+  word_document: default
+  html_document: default
+editor_options:
+  chunk_output_type: console
+---
+## Course Project Part 2
+### Kenny Buckenmeyer
+
+```{r include=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(caret)
+library(mice)
+library(VIM)
+library(ranger)
+library(RColorBrewer)
+library(rpart)
+library(rattle)
+library(e1071)
+library(xgboost)
+library(usemodels)
+library(nnet)
+library(stacks)
+library(GGally)
+library(skimr)
+```
+
+Data Cleanup
+
+```{r}
+ames_student <- read_csv("ames_student.csv")
+
+ames_student <- ames_student %>% mutate_if(is.character, as_factor)
+
+summary(ames_student)
+str(ames_student)
+```
+
+```{r}
+ames <- ames_student %>% select(-X1, -Longitude, -Latitude, -Electrical, -Utilities, -Street, -Garage_Qual, -Garage_Cond, -Paved_Drive, -Functional, -Heating, -Bsmt_Cond, -Roof_Matl, -Condition_1, -Condition_2, -Land_Slope, -Land_Contour, -Alley, -BsmtFin_SF_2, -Misc_Val, -Screen_Porch, -Low_Qual_Fin_SF, -Kitchen_AbvGr, -Three_season_porch, -Pool_Area, -Pool_QC, -Enclosed_Porch, -Open_Porch_SF, -Wood_Deck_SF, -Mas_Vnr_Type, -Misc_Feature)
+
+ames <- select(ames, MS_Zoning, everything()) %>%
+  filter(MS_Zoning %in% c("Residential_Low_Density", "Residential_High_Density", "Floating_Village_Residential", "Residential_Medium_Density"))
+
+summary(ames)
+str(ames)
+```
+
+Decision Trees
+
+```{r}
+set.seed(1234)
+ames_split <- initial_split(ames, prob=0.70, strata=Above_Median)
+ames_train <- training(ames_split)
+ames_test <- testing(ames_split)
+```
+
+```{r}
+ames_recipe <- recipe(Above_Median ~., ames_train) %>%
+  step_other(all_nominal(), threshold=0.1) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_corr(all_predictors()) %>%
+  step_center(all_predictors()) %>%
+  step_scale(all_predictors())
+
+ames_model <-
+  decision_tree() %>%
+  set_engine("rpart", model=TRUE) %>%
+  set_mode("classification")
+
+ames_wf <-
+  workflow() %>%
+  add_recipe(ames_recipe) %>%
+  add_model(ames_model)
+```
+
+```{r}
+ames_fit <-
+  fit(ames_wf, ames_train)
+```
+
+```{r}
+ames_fit %>%
+  pull_workflow_fit() %>%
+  pluck("fit")
+```
+
+```{r}
+ames_tree <-
+  ames_fit %>%
+  pull_workflow_fit() %>%
+  pluck("fit")
+```
+
+```{r}
+fancyRpartPlot(ames_tree)
+
+ames_fit$fit$fit$fit$cptable
+```
+
+```{r}
+amespred <- predict(ames_fit, ames_train, type="class")
+head(amespred)
+```
+
+```{r}
+confusionMatrix(amespred$.pred_class, ames_train$Above_Median, positive="Yes")
+```
+
+```{r}
+set.seed(234)
+folds <- vfold_cv(ames_train, v=5)
+```
+
+```{r}
+ames2_recipe <- recipe(Above_Median ~., ames_train) %>%
+  step_other(all_nominal(), threshold=0.1) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_center(all_predictors()) %>%
+  step_scale(all_predictors())
+
+ames2_model <-
+  decision_tree(cost_complexity=tune()) %>%
+  set_engine("rpart", model=TRUE) %>%
+  set_mode("classification")
+
+ames2_grid <- grid_regular(cost_complexity(),
+                           levels=20)
+
+ames2_wf <-
+  workflow() %>%
+  add_recipe(ames2_recipe) %>%
+  add_model(ames2_model)
+
+ames2_res <-
+  ames2_wf %>%
+  tune_grid(
+    resamples=folds,
+    grid=ames2_grid
+  )
+```
+
+```{r}
+ames2_res %>%
+  collect_metrics() %>%
+  ggplot(aes(cost_complexity, mean)) +
+  geom_line(size=1.5, alpha=0.6) +
+  geom_point(size=2) +
+  facet_wrap(~ .metric, scales="free", nrow=2)
+```
+
+```{r}
+best_ames_tree <- ames2_res %>%
+  select_best("accuracy")
+```
+
+```{r}
+final_ames2_wf <- 
+  ames2_wf %>%
+  finalize_workflow(best_ames_tree)
+```
+
+```{r}
+final_ames2_fit <-fit(final_ames2_wf, ames_train)
+
+ames2_tree <- final_ames2_fit %>%
+  pull_workflow_fit() %>%
+  pluck("fit")
+```
+
+```{r}
+fancyRpartPlot(ames2_tree, tweak=1.5)
+
+final_ames2_fit$fit$fit$fit$cptable
+```
+
+```{r}
+ames2pred <- predict(final_ames2_fit, ames_train, type="class")
+head(amespred)
+```
+
+```{r}
+confusionMatrix(ames2pred$.pred_class, ames_train$Above_Median, positive="Yes")
+```
+
+Random Forest
+
+```{r}
+ames3_recipe <- recipe(Above_Median ~., ames_train) %>%
+  step_other(all_nominal(), threshold=0.1) %>%
+  step_nzv(all_predictors()) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_center(all_predictors()) %>%
+  step_scale(all_predictors())
+
+ames3_model <-
+  rand_forest() %>%
+  set_engine("ranger") %>%
+  set_mode("classification")
+
+ames3_wf <-
+  workflow() %>%
+  add_recipe(ames3_recipe) %>%
+  add_model(ames3_model)
+
+set.seed(123)
+ames3_fit <- fit(ames3_wf, ames_train)
+```
+
+```{r}
+ames3pred <- predict(ames3_fit, ames_train)
+head(ames3pred)
+```
+
+```{r}
+confusionMatrix(ames3pred$.pred_class, ames_train$Above_Median, positive="Yes")
+```
+
+XGBoost
+
+```{r}
+set.seed(123)
+folds2 <- vfold_cv(ames_train, v=5)
+```
+
+```{r}
+xgboost_recipe <- 
+  recipe(formula = Above_Median ~ ., data=ames_train) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>% 
+  step_zv(all_predictors()) 
+
+xgboost_spec <- 
+  boost_tree(trees=tune(), min_n=tune(), tree_depth=tune(), learn_rate=tune(), 
+    loss_reduction=tune(), sample_size=tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("xgboost") 
+
+xgboost_workflow <- 
+  workflow() %>% 
+  add_recipe(xgboost_recipe) %>% 
+  add_model(xgboost_spec) 
+
+set.seed(2986)
+xgboost_tune <-
+  tune_grid(xgboost_workflow, resamples=folds2, grid=25)
+```
+
+```{r}
+best_xgb <- select_best(xgboost_tune, "accuracy")
+```
+
+```{r}
+ames_xgb <- 
+  finalize_workflow(
+    xgboost_workflow,
+    best_xgb
+  )
+```
+
+```{r}
+xgb_fit <- fit(ames_xgb, ames_train)
+```
+
+```{r}
+xgbpred <- predict(xgb_fit, ames_train)
+head(xgbpred)
+```
+
+```{r}
+confusionMatrix(xgbpred$.pred_class, ames_train$Above_Median, positive="Yes")
+```
+
+Neural Network
+
+```{r}
+set.seed(123)
+folds3 <- vfold_cv(ames_train, v=5)
+```
+
+```{r}
+ames4_recipe <- recipe(Above_Median ~., ames_train) %>%
+  step_normalize(all_predictors(), -all_nominal()) %>%
+  step_dummy(all_nominal(), -all_outcomes())
+
+ames4_model <-
+  mlp(hidden_units=tune(), penalty=tune(),
+      epochs=tune()) %>%
+  set_mode("classification") %>%
+  set_engine("nnet", verbose=0)
+
+ames4_wf <- 
+  workflow() %>%
+  add_recipe(ames4_recipe) %>%
+  add_model(ames4_model)
+
+set.seed(1234)
+ames_neural_tune <- 
+  tune_grid(ames4_wf, resamples=folds3, grid=25)
+```
+
+```{r}
+ames_neural_tune %>%
+  collect_metrics() %>%
+  filter(.metric=="accuracy") %>%
+  select(mean, hidden_units, penalty, epochs) %>%
+  pivot_longer(hidden_units:epochs,
+               values_to="value",
+               names_to="parameter") %>%
+  ggplot(aes(value, mean, color=parameter)) +
+  geom_point(show.legend=FALSE) +
+  facet_wrap(~parameter, scales="free_x") +
+  labs(x=NULL, y="Accuracy")
+```
+
+```{r}
+best_ames_nn <- select_best(ames_neural_tune, "accuracy")
+```
+
+```{r}
+final_ames_nn <- finalize_workflow(
+  ames4_wf,
+  best_ames_nn)
+```
+
+```{r}
+ames4_fit <- fit(final_ames_nn, ames_train)
+```
+
+```{r}
+ames4pred <- predict(ames4_fit, ames_train)
+head(ames4pred)
+```
+
+```{r}
+confusionMatrix(ames4pred$.pred_class, ames_train$Above_Median, positive="Yes")
+```

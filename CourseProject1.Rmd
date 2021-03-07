@@ -1,0 +1,244 @@
+---
+output:
+  word_document: default
+  html_document: default
+  always_allow_html: yes
+---
+## BAN502 Course Project Part 1
+### Kenny Buckenmeyer
+
+```{r include = FALSE}
+library(utils)
+library(readr)
+library(tidyverse)
+library(tidymodels)
+library(caret)
+library(mice)
+library(VIM)
+library(RColorBrewer)
+library(rpart)
+library(rattle)
+library(ranger)
+library(e1071)
+library(leaflet)
+library(webshot)
+library(mapview)
+library(htmlwidgets)
+```
+
+```{r include = FALSE}
+ames_student <- read_csv("ban-502-ames-classification-spring-2021/ames_student.csv")
+
+summary(ames_student)
+str(ames_student)
+```
+	
+```{r}
+ames_student <- ames_student %>% mutate_if(is.character, as_factor)
+```
+
+```{r}
+colorpal <- colorFactor(palette = "RdYlBu", ames_student$Above_Median)
+```
+
+```{r}
+ames_map <- leaflet() %>% setView(lng = -93.64, lat = 42.02, zoom = 12) %>%
+  addTiles() %>%
+  addCircleMarkers(data = ames_student, lng = ~Longitude, lat = ~Latitude, weight = 1.5, radius = 1, color = ~colorpal(Above_Median)) %>%
+  addLegend(data = ames_student, position = "bottomright", pal = colorpal, values = ~Above_Median)
+mapshot(ames_map, file ="~/ames.png")
+```
+
+```{r include = FALSE}
+webshot::install_phantomjs()
+```
+
+```{r}
+knitr::include_graphics("ames.png")
+```
+
+This map provides a visualization comparing the houses that sold above the median price and the houses that sold below the median price. There is noticeable difference among the houses north of Iowa State University. The houses west and northwest of Parkview Heights typically sold above the median price, while the houses east and southeast of Parkview Heights typically sold below the median price.
+
+```{r}
+ames_student$X1 <- NULL
+ames_student <- ames_student %>% relocate(Above_Median, .before = MS_SubClass)
+head(ames_student)
+```
+
+```{r}
+ames_student %>% count(Above_Median)
+```
+
+```{r include = FALSE}
+table(ames_student$MS_SubClass)
+table(ames_student$MS_Zoning)
+table(ames_student$LOt_Frontage)
+table(ames_student$LOt_Area)
+table(ames_student$Street)
+table(ames_student$Alley)
+table(ames_student$Lot_Shape)
+table(ames_student$Land_Contour)
+table(ames_student$Utilities)
+table(ames_student$Lot_Config)
+table(ames_student$Land_Slope)
+table(ames_student$Neighborhood)
+table(ames_student$Condition_1)
+table(ames_student$Condition_2)
+table(ames_student$Bldg_Type)
+table(ames_student$House_Style)
+table(ames_student$Overall_Qual)
+table(ames_student$Overall_Cond)
+table(ames_student$Year_Built)
+table(ames_student$Year_Remod_Add)
+table(ames_student$Roof_Style)
+table(ames_student$Roof_Matl)
+table(ames_student$Exterior_1st)
+table(ames_student$Exterior_2nd)
+table(ames_student$Mas_Vnr_Type)
+table(ames_student$Mas_Vnr_Area)
+table(ames_student$Exter_Qual)
+table(ames_student$Exter_Cond)
+table(ames_student$Foundation)
+table(ames_student$Bsmt_Qual)
+table(ames_student$Bsmt_Cond)
+table(ames_student$Bsmt_Exposure)
+table(ames_student$BsmtFin_Type_1)
+table(ames_student$BsmtFin_SF_1)
+table(ames_student$BsmtFin_Type_2)
+table(ames_student$BsmtFin_SF_2)
+table(ames_student$Bsmt_Unf_SF)
+table(ames_student$Total_Bsmt_SF)
+table(ames_student$Heating)
+table(ames_student$Heating_QC)
+table(ames_student$Central_Air)
+table(ames_student$Electrical)
+table(ames_student$First_Flr_SF)
+table(ames_student$Second_Flr_SF)
+table(ames_student$Low_Qual_Fin_SF)
+table(ames_student$Gr_Liv_Area)
+table(ames_student$Bsmt_Full_Bath)
+table(ames_student$Bsmt_Half_Bath)
+table(ames_student$Full_Bath)
+table(ames_student$Half_Bath)
+table(ames_student$Bedroom_AbvGr)
+table(ames_student$Kitchen_AbvGr)
+table(ames_student$Kitchen_Qual)
+table(ames_student$TotRms_AbvGrd)
+table(ames_student$Functional)
+table(ames_student$Fireplaces)
+table(ames_student$Fireplace_Qu)
+table(ames_student$Garage_Type)
+table(ames_student$Garage_Finish)
+table(ames_student$Garage_Cars)
+table(ames_student$Garage_Area)
+table(ames_student$Garage_Qual)
+table(ames_student$Garage_Cond)
+table(ames_student$Paved_Drive)
+table(ames_student$Wood_Deck_SF)
+table(ames_student$Open_Porch_SF)
+table(ames_student$Enclosed_Porch)
+table(ames_student$Three_season_porch)
+table(ames_student$Screen_Porch)
+table(ames_student$Pool_Area)
+table(ames_student$Pool_QC)
+table(ames_student$Fence)
+table(ames_student$Misc_Feature)
+table(ames_student$Misc_Val)
+table(ames_student$Mo_Sold)
+table(ames_student$Year_Sold)
+table(ames_student$Sale_Type)
+table(ames_student$Sale_Condition)
+```      
+      
+```{r}
+ggplot(ames_student, aes(x = Lot_Frontage, y = Above_Median)) +
+  geom_boxplot() +
+  labs(title = "Lot Frontage and Above Median Price",
+       x = "Linear Feet of Street Connected to Property",
+       y = "Sale Price Above Median")
+
+ggplot(ames_student, aes(x = Lot_Area, y = Above_Median)) +
+  geom_boxplot() +
+  labs(title = "Lot Area and Above Median Price",
+       x = "Lot Size in Square Feet",
+       y = "Sale Price Above Median")
+
+ggplot(ames_student, aes(x = Year_Built, y = Above_Median)) +
+  geom_boxplot() +
+  labs(title = "Year Built and Above Median Price",
+       x = "Year Built",
+       y = "Sale Price Above Median")
+
+ggplot(ames_student, aes(x = Year_Remod_Add, y = Above_Median)) +
+  geom_boxplot() +
+  labs(title = "Year Remodeled and Above Median Price", 
+       x= "Year Remodeling or Additions Completed",
+       y = "Sale Price Above Median")
+
+ggplot(ames_student, aes(x = Gr_Liv_Area, y = Above_Median)) +
+  geom_boxplot() +
+  labs(title = "Above Grade Living Area and Above Median Price",
+       x = "Above Grade Living Area Square Feet",
+       y = "Sale Price Above Median")
+```
+
+The above plots compared five numeric variables (Lot_Frontage, Lot_Area, Year_Built, Year_Remod_Add, Gr_Liv_Area). There isn't a significant difference between the houses that sold above and below the median price when looking at the total linear square feet of street connected to the property. Surprisingly, there isn't a significant difference between the houses that sold above and below the median price when looking at total lot size. There is a significant difference when looking at the year the house was built. While the houses that sold above the median price have more variance, the mean of these houses is significantly higher than the houses that did not sell above the median price. Houses with more recent remodeling or additions sold above the median price more often than houses with older remodeling or additions. Not surprisingly, houses with more above ground living area sold above the median price.
+
+```{r}
+ggplot(ames_student, aes(x = Neighborhood, fill = Above_Median)) +
+  geom_bar() + theme(axis.text.x = element_text(size = 8, angle = 90)) +
+  labs(title = "Neighborhood and Above Median Price",
+       y = "Count")
+```
+
+The above visualization compares whether or not houses sold above the median price and the neighborhoods in which the houses were located. A few neighborhoods stand out that have houses selling above the median price, including Gilbert, Stone Brook, Northwest Ames, Somerset, Northridge Heights, Northridge, Sawyer West, College Creek, Crawford, and Timberland.
+
+```{r}
+ggplot(ames_student, aes(x = MS_SubClass, fill = Above_Median)) +
+  geom_bar() + theme(axis.text.x = element_text(size = 6, angle = 90)) +
+  labs(title = "Type of Dwelling and Above Median Price",
+       x = "Type of Dwelling",
+       y = "Count")
+```
+
+The above visualization compares whether or not houses sold above the median price and the type of dwelling. Two types of dwellings stand out that have houses selling above the median price, including two story houses built after 1945 and one store planned unit developments built after 1945.
+
+```{r}
+ggplot(ames_student, aes(x = Bldg_Type, fill = Above_Median)) +
+  geom_bar() + theme(axis.text.x = element_text(size = 7, angle = 90)) +
+  labs(title = "Building Type and Above Median Price",
+       x = "Building Type",
+       y = "Count")
+```
+
+The above visualization compares whether or not houses sold above the median price and the building type. Three building types stand out that have houses not selling above the median price, including townhouses inside units, duplexes, and two family conversions from previous single family housing.
+
+```{r}
+ggplot(ames_student, aes(x = House_Style, fill = Above_Median)) +
+  geom_bar() + theme(axis.text.x = element_text(size = 7, angle = 90)) +
+  labs(title = "House Style and Above Median Price",
+       x = "House Style",
+       y = "Count")
+```
+
+The above visualization compares whether or not houses sold above the median price and the house style. One style stands out that have houses selling above the median price, which is two story houses. 
+
+```{r}
+ggplot(ames_student, aes(x = Overall_Qual, fill = Above_Median)) +
+  geom_bar() + theme(axis.text.x = element_text(size = 6, angle = 90)) +
+  labs(title = "Overall Quality and Above Median Price",
+       x = "Overall Quality",
+       y = "Count")
+```
+
+The above visualization compares whether or not houses sold above the median price and the overall quality. The overall quality rates the overall material and finish of the house. A few categories stand out that have houses selling above the median price, including Good, Very Good, Excellent, and Very Excellent.
+
+```{r}
+ggplot(ames_student, aes(x = Overall_Cond, fill = Above_Median)) +
+  geom_bar() + theme(axis.text.x = element_text(size = 6, angle = 90)) +
+  labs(title = "Overall Condition and Above Median Price",
+       x = "Overall Condition",
+       y = "Count")
+```
+
+The above visualization compares whether or not houses sold above the median price and the overall condition of the house. Surprisingly, only the Average Overall Condition shows a significant increase in the number of houses selling above the median price. 
